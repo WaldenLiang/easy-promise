@@ -7,148 +7,150 @@ function EasyPromise(func) {
     throw new TypeError("promise resolver must be a function");
   }
 
-  let _status = StatusMap.PENDING;
-  let _handlers = [];
-  let _value;
-  let _reason;
+  func(_resolveHook, _rejectHook);
 
-  function _resolver(value) {
-    if (_status === StatusMap.PENDING) {
-      _value = value;
-      _status = StatusMap.FULFILLED;
-      _handlers.splice(0).forEach(({ onFulfilled, onRejected, next }) => {
-        _resolveOrReject(onFulfilled, onRejected, next);
-      });
-    }
-  }
-
-  function _rejecter(reason) {
-    if (_status === StatusMap.PENDING) {
-      _status = StatusMap.REJECTED;
-      _reason = reason;
-      _handlers.splice(0).forEach(({ onFulfilled, onRejected, next }) => {
-        _resolveOrReject(onFulfilled, onRejected, next);
-      });
-    }
-  }
-
-  func(_resolver, _rejecter);
+  let status = PENDING;
+  let awaitQueue = [];
+  let value;
+  let reason;
 
   this.then = function (onFulfilled, onRejected) {
-    const next = {};
-    const promise = new EasyPromise(function (resolve, reject) {
-      next.resolve = resolve;
-      next.reject = reject;
+    const args = Array(5);
+
+    args[0] = onFulfilled;
+    args[1] = onRejected;
+
+    args[2] = new EasyPromise(function (resolve, reject) {
+      args[3] = resolve;
+      args[4] = reject;
     });
-    next.promise = promise;
 
-    if (_status === StatusMap.PENDING) {
-      const handler = { next };
-
-      if (typeof onFulfilled === "function") {
-        handler.onFulfilled = onFulfilled;
-      }
-
-      if (typeof onRejected === "function") {
-        handler.onRejected = onRejected;
-      }
-
-      _handlers.push(handler);
+    if (status === PENDING) {
+      awaitQueue.push(args);
     } else {
-      _resolveOrReject(onFulfilled, onRejected, next);
+      _resolveOrReject(args);
     }
-    return promise;
+
+    return args[2];
   };
 
-  function _resolveOrReject(onFulfilled, onRejected, next) {
-    const isFulfilled = _status === StatusMap.FULFILLED;
+  function _resolveHook(v) {
+    if (status === PENDING) {
+      value = v;
+      status = FULFILLED;
+
+      awaitQueue.splice(0).forEach(function (args) {
+        _resolveOrReject(args);
+      });
+    }
+  }
+
+  function _rejectHook(r) {
+    if (status === PENDING) {
+      reason = r;
+      status = REJECTED;
+
+      awaitQueue.splice(0).forEach(function (args) {
+        _resolveOrReject(args);
+      });
+    }
+  }
+
+  function _resolveOrReject([
+    onFulfilled,
+    onRejected,
+    promise2,
+    resolve,
+    reject,
+  ]) {
+    const isFulfilled = status === FULFILLED;
     const handler = isFulfilled ? onFulfilled : onRejected;
-    setTimeout(function () {
-      if (typeof handler === "function") {
+
+    if (typeof handler === "function") {
+      setTimeout(function () {
         try {
-          const value = handler(isFulfilled ? _value : _reason);
-          if (value === next.promise) {
+          const x = handler(isFulfilled ? value : reason);
+          if (x === promise2) {
             throw new TypeError(
               "The `promise` and `x` cannot refer to the same object."
             );
           }
 
           if (
-            typeof value === "function" ||
-            (value !== null && typeof value === "object")
+            typeof x === "function" ||
+            (x !== null && typeof x === "object")
           ) {
-            next.promise.then = value.then;
+            const then = x.then;
 
-            if (typeof next.promise.then === "function") {
-              let xStatus = StatusMap.PENDING;
+            if (typeof then === "function") {
+              let xStatus = PENDING;
               try {
-                next.promise.then.apply(value, [
+                then.apply(x, [
                   function (y) {
-                    if (xStatus === StatusMap.PENDING) {
-                      xStatus = StatusMap.FULFILLED;
+                    if (xStatus === PENDING) {
+                      xStatus = FULFILLED;
                       innerResolver(y);
 
                       function innerResolver(_y) {
-                        let __status = StatusMap.PENDING;
+                        let __status = PENDING;
                         try {
                           const then = _y && _y.then;
                           if (typeof then === "function") {
                             then.apply(_y, [
                               function (__v) {
-                                if (__status === StatusMap.PENDING) {
-                                  __status = StatusMap.FULFILLED;
+                                if (__status === PENDING) {
+                                  __status = FULFILLED;
                                   innerResolver(__v);
                                 }
                               },
                               function (__r) {
-                                if (__status === StatusMap.PENDING) {
-                                  __status = StatusMap.REJECTED;
-                                  // innerResolver(__r);
-                                  next.reject(__r);
+                                if (__status === PENDING) {
+                                  __status = REJECTED;
+                                  reject(__r);
                                 }
                               },
                             ]);
                           } else {
-                            if (__status === StatusMap.PENDING) {
-                              __status = StatusMap.FULFILLED;
-                              next.resolve(_y);
+                            if (__status === PENDING) {
+                              __status = FULFILLED;
+                              resolve(_y);
                             }
                           }
                         } catch (e) {
-                          if (__status === StatusMap.PENDING) {
-                            __status = StatusMap.REJECTED;
-                            next.reject(e);
+                          if (__status === PENDING) {
+                            __status = REJECTED;
+                            reject(e);
                           }
                         }
                       }
                     }
                   },
                   function (r) {
-                    if (xStatus === StatusMap.PENDING) {
-                      xStatus = StatusMap.REJECTED;
-                      next.reject(r);
+                    if (xStatus === PENDING) {
+                      xStatus = REJECTED;
+                      reject(r);
                     }
                   },
                 ]);
               } catch (_e) {
-                if (xStatus === StatusMap.PENDING) {
-                  xStatus = StatusMap.REJECTED;
-                  next.reject(_e);
+                if (xStatus === PENDING) {
+                  xStatus = REJECTED;
+                  reject(_e);
                 }
               }
             } else {
-              next.resolve(value);
+              resolve(x);
             }
           } else {
-            next.resolve(value);
+            resolve(x);
           }
         } catch (e) {
-          next.reject(e);
+          reject(e);
         }
-      } else {
-        isFulfilled ? next.resolve(_value) : next.reject(_reason);
-      }
-    }, 0);
+      }, 0);
+    } else {
+      isFulfilled ? resolve(value) : reject(reason);
+    }
   }
 }
 
