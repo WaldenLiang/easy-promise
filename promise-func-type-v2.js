@@ -15,23 +15,16 @@ function EasyPromise(func) {
   let reason;
 
   this.then = function (onFulfilled, onRejected) {
-    const args = Array(5);
-
-    args[0] = onFulfilled;
-    args[1] = onRejected;
-
-    args[2] = new EasyPromise(function (resolve, reject) {
-      args[3] = resolve;
-      args[4] = reject;
+    const promise2 = new EasyPromise(function (resolve, reject) {
+      if (status === PENDING) {
+      } else if (status === FULFILLED) {
+        const x = onFulfilled(value);
+      } else if (status === REJECTED) {
+        const x = onRejected(r);
+      }
     });
 
-    if (status === PENDING) {
-      awaitQueue.push(args);
-    } else {
-      _resolveOrReject(args);
-    }
-
-    return args[2];
+    return promise2;
   };
 
   function _resolveHook(v) {
